@@ -1,0 +1,1 @@
+// Content editor component
