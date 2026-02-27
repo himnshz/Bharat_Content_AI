@@ -1,9 +1,15 @@
 # Backend - Bharat Content AI
 
-API services for content generation, translation, and social media management.
+Python FastAPI backend for content generation, translation, and social media management.
 
 ## Setup
 ```bash
-npm install
-npm run dev
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+## Run
+```bash
+uvicorn app.main:app --reload
 ```
