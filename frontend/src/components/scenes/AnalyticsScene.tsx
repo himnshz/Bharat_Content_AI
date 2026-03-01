@@ -2,7 +2,7 @@
 
 import { useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { Text, Float, Line } from '@react-three/drei'
+import { Text, Float } from '@react-three/drei'
 import * as THREE from 'three'
 
 export default function AnalyticsScene() {
