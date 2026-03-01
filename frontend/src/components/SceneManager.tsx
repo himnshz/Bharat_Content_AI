@@ -6,6 +6,10 @@ import { OrbitControls, PerspectiveCamera, EffectComposer, Bloom } from '@react-
 import HomeScene from './scenes/HomeScene'
 import GenerateScene from './scenes/GenerateScene'
 import TranslateScene from './scenes/TranslateScene'
+import ScheduleScene from './scenes/ScheduleScene'
+import AnalyticsScene from './scenes/AnalyticsScene'
+import VoiceScene from './scenes/VoiceScene'
+import ProfileScene from './scenes/ProfileScene'
 
 interface SceneManagerProps {
   currentScene: string
@@ -33,6 +37,14 @@ export default function SceneManager({ currentScene }: SceneManagerProps) {
         return <GenerateScene />
       case 'translate':
         return <TranslateScene />
+      case 'schedule':
+        return <ScheduleScene />
+      case 'analytics':
+        return <AnalyticsScene />
+      case 'voice':
+        return <VoiceScene />
+      case 'profile':
+        return <ProfileScene />
       case 'home':
       default:
         return <HomeScene />

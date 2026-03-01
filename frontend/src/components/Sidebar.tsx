@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/router'
 import { 
   Home, 
   Sparkles, 
@@ -21,23 +20,21 @@ interface SidebarProps {
 
 export default function Sidebar({ currentScene, onSceneChange }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
-  const router = useRouter()
 
   const navItems = [
-    { id: 'home', label: 'Home', icon: Home, path: '/', scene: 'home' },
-    { id: 'generate', label: 'Generate', icon: Sparkles, path: '/content-generator', scene: 'generate' },
-    { id: 'translate', label: 'Translate', icon: Languages, path: '/translator', scene: 'translate' },
-    { id: 'schedule', label: 'Schedule', icon: Calendar, path: '/scheduler', scene: 'schedule' },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3, path: '/analytics', scene: 'analytics' },
-    { id: 'voice', label: 'Voice', icon: Mic, path: '/voice-input', scene: 'voice' },
-    { id: 'profile', label: 'Profile', icon: User, path: '/profile', scene: 'profile' },
+    { id: 'home', label: 'Home', icon: Home, scene: 'home' },
+    { id: 'generate', label: 'Generate', icon: Sparkles, scene: 'generate' },
+    { id: 'translate', label: 'Translate', icon: Languages, scene: 'translate' },
+    { id: 'schedule', label: 'Schedule', icon: Calendar, scene: 'schedule' },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3, scene: 'analytics' },
+    { id: 'voice', label: 'Voice', icon: Mic, scene: 'voice' },
+    { id: 'profile', label: 'Profile', icon: User, scene: 'profile' },
   ]
 
   const handleNavClick = (item: typeof navItems[0]) => {
     if (onSceneChange) {
       onSceneChange(item.scene)
     }
-    // router.push(item.path)
   }
 
   return (

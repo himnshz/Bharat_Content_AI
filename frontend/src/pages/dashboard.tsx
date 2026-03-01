@@ -39,12 +39,12 @@ export default function Dashboard() {
 
       <div className="flex h-screen overflow-hidden bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
         {/* Sidebar Navigation */}
-        <Sidebar currentScene={currentScene} onSceneChange={handleSceneChange} />
+        {mounted && <Sidebar currentScene={currentScene} onSceneChange={handleSceneChange} />}
 
         {/* Main Content Area - 3D Scene */}
         <main className="flex-1 ml-64 relative">
           {/* Background gradient overlay */}
-          <div className="absolute inset-0 bg-gradient-to-br from-periwinkle/10 via-transparent to-purple/10 pointer-events-none"></div>
+          <div className="absolute inset-0 bg-gradient-to-br from-periwinkle/10 via-transparent to-purple/10 pointer-events-none" />
 
           {/* 3D Scene Canvas */}
           {mounted && (
@@ -58,7 +58,7 @@ export default function Dashboard() {
             {/* Status Card */}
             <div className="glass-effect px-6 py-4 rounded-2xl slide-in-top">
               <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+                <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse" />
                 <div>
                   <p className="text-white font-semibold">System Online</p>
                   <p className="text-white/60 text-sm">All services operational</p>
@@ -120,13 +120,6 @@ export default function Dashboard() {
           </div>
         </main>
       </div>
-
-      <style jsx>{`
-        @keyframes float {
-          0%, 100% { transform: translateY(0px); }
-          50% { transform: translateY(-10px); }
-        }
-      `}</style>
     </>
   )
 }
