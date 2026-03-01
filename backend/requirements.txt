@@ -21,3 +21,22 @@ python-multipart==0.0.6
 # HTTP client
 httpx==0.25.0
 requests==2.31.0
+
+# AI Services (install as needed based on which service you want to use)
+# Google Gemini
+google-generativeai==0.3.2
+
+# OpenAI (optional)
+# openai==1.6.1
+
+# Anthropic Claude (optional)
+# anthropic==0.8.1
+
+# Cohere (optional)
+# cohere==4.37
+
+# HuggingFace (optional)
+# huggingface-hub==0.20.1
+
+# Groq (optional)
+# groq==0.4.1

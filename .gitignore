@@ -9,6 +9,11 @@ env/
 .env
 .env.local
 
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
 # Build outputs
 dist/
 build/
