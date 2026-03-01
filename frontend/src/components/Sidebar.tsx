@@ -41,7 +41,7 @@ export default function Sidebar({ currentScene, onSceneChange }: SidebarProps) {
     <div 
       className={`
         fixed left-0 top-0 h-screen
-        bg-gradient-to-b from-purple/90 to-lavender-600/90
+        bg-gradient-to-b from-purple-900/90 to-lavender-600/90
         backdrop-blur-xl border-r border-white/10
         transition-all duration-500 ease-in-out
         z-50 slide-in-left
@@ -108,7 +108,7 @@ export default function Sidebar({ currentScene, onSceneChange }: SidebarProps) {
       </div>
 
       {/* Glow Effect */}
-      <div className="absolute inset-0 bg-gradient-to-r from-cyan-light/10 to-transparent pointer-events-none"></div>
+      <div className="absolute inset-0 bg-gradient-to-r from-cyan-light/10 to-transparent pointer-events-none" />
     </div>
   )
 }

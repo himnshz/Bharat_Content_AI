@@ -30,6 +30,17 @@ export default function Dashboard() {
     setCurrentScene(scene)
   }
 
+  if (!mounted) {
+    return (
+      <div className="w-full h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
+        <div className="text-center">
+          <div className="shimmer text-3xl font-bold mb-4 text-white">Loading Universe...</div>
+          <div className="pulsate-fwd text-6xl">🌌</div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <Head>
@@ -39,7 +50,7 @@ export default function Dashboard() {
 
       <div className="flex h-screen overflow-hidden bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
         {/* Sidebar Navigation */}
-        {mounted && <Sidebar currentScene={currentScene} onSceneChange={handleSceneChange} />}
+        <Sidebar currentScene={currentScene} onSceneChange={handleSceneChange} />
 
         {/* Main Content Area - 3D Scene */}
         <main className="flex-1 ml-64 relative">
@@ -47,11 +58,9 @@ export default function Dashboard() {
           <div className="absolute inset-0 bg-gradient-to-br from-periwinkle/10 via-transparent to-purple/10 pointer-events-none" />
 
           {/* 3D Scene Canvas */}
-          {mounted && (
-            <div className="w-full h-full fade-in">
-              <SceneManager currentScene={currentScene} />
-            </div>
-          )}
+          <div className="w-full h-full fade-in">
+            <SceneManager currentScene={currentScene} />
+          </div>
 
           {/* Floating UI Elements */}
           <div className="absolute top-8 right-8 z-10 space-y-4">
