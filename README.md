@@ -553,7 +553,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Documentation:** [docs/](docs/)
 - **Issues:** [GitHub Issues](https://github.com/himnshz/Bharat_Content_AI/issues)
 - **Discussions:** [GitHub Discussions](https://github.com/himnshz/Bharat_Content_AI/discussions)
-- **Email:** support@bharatcontentai.com
+
 
 ---
 
@@ -566,7 +566,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 <div align="center">
 
 **Made with ❤️ in India**
-
-[Website](https://bharatcontentai.com) • [Documentation](docs/) • [API Docs](http://localhost:8000/docs)
 
 </div>
