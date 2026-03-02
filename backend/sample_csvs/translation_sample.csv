@@ -1,0 +1,11 @@
+text,source_language,target_language,preserve_formatting
+"Hello, welcome to our platform!",english,hindi,true
+"Thank you for your support",english,tamil,true
+"Please check your email for confirmation",english,telugu,true
+"Your order has been successfully placed",english,bengali,true
+"We appreciate your feedback",english,marathi,true
+"Contact us for more information",english,gujarati,true
+"Follow us on social media",english,kannada,true
+"Subscribe to our newsletter",english,hindi,true
+"Limited time offer - 50% off!",english,tamil,true
+"Free shipping on orders above ₹500",english,hindi,true

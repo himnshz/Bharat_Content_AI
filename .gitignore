@@ -2,26 +2,54 @@
 node_modules/
 __pycache__/
 *.pyc
+*.py[cod]
+*$py.class
 venv/
 env/
+ENV/
 
 # Environment variables
 .env
 .env.local
+.env.production
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
+bharat_content_ai.db
 
 # Build outputs
 dist/
 build/
+.next/
+out/
 *.log
+logs/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
+Thumbs.db
+
+# Uploads & Temp
+backend/temp_uploads/
+uploads/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Redis
+dump.rdb

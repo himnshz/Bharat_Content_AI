@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, Enum as SQLEnum, Float
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum as SQLEnum, Float, Index
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -63,8 +64,8 @@ class Content(Base):
     estimated_reading_time = Column(Integer)  # in seconds
     
     # SEO and keywords
-    keywords = Column(JSON)  # List of extracted keywords
-    hashtags = Column(JSON)  # Suggested hashtags
+    keywords = Column(JSONB)  # List of extracted keywords - PostgreSQL JSONB for better performance
+    hashtags = Column(JSONB)  # Suggested hashtags
     
     # Quality metrics
     quality_score = Column(Float)  # AI-generated quality score (0-100)
@@ -85,6 +86,15 @@ class Content(Base):
     user = relationship("User", back_populates="contents")
     posts = relationship("Post", back_populates="content")
     translations = relationship("Translation", back_populates="content", cascade="all, delete-orphan")
+    
+    # PostgreSQL-specific indexes for performance
+    __table_args__ = (
+        Index('idx_content_user_status', 'user_id', 'status'),
+        Index('idx_content_language_type', 'language', 'content_type'),
+        Index('idx_content_created_at', 'created_at'),
+        Index('idx_content_keywords_gin', 'keywords', postgresql_using='gin'),  # GIN index for JSONB
+        Index('idx_content_hashtags_gin', 'hashtags', postgresql_using='gin'),  # GIN index for JSONB
+    )
     
     def __repr__(self):
         return f"<Content {self.id} - {self.language} - {self.content_type}>"

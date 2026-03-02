@@ -13,7 +13,7 @@ DATABASE_URL = os.getenv(
 )
 
 # For production with AWS RDS PostgreSQL:
-# DATABASE_URL = "postgresql://username:password@rds-endpoint:5432/dbname"
+# DATABASE_URL = "postgresql+asyncpg://username:password@rds-endpoint:5432/dbname"
 
 # Create engine
 engine = create_engine(
@@ -45,7 +45,9 @@ def init_db():
     from app.models import (
         User, Content, Post, Translation, 
         SocialAccount, Analytics, ContentPerformance,
-        VoiceInput, AIModelConfig, ModelUsageLog
+        VoiceInput, AIModelConfig, ModelUsageLog, Campaign,
+        Team, TeamMember, TeamInvite, Comment, ApprovalWorkflow, ActivityLog,
+        Template
     )
     Base.metadata.create_all(bind=engine)
     print("✓ Database tables created successfully!")

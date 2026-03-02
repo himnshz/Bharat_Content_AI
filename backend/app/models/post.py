@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum as SQLEnum, Boolean, Text, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum as SQLEnum, Boolean, Text, JSON, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -76,6 +76,13 @@ class Post(Base):
     # Relationships
     user = relationship("User", back_populates="posts")
     content = relationship("Content", back_populates="posts")
+    
+    # Performance indexes for common queries
+    __table_args__ = (
+        Index('idx_post_user_schedule', 'user_id', 'scheduled_time'),
+        Index('idx_post_user_platform_status', 'user_id', 'platform', 'status'),
+        Index('idx_post_scheduled_status', 'scheduled_time', 'status'),
+    )
     
     def __repr__(self):
         return f"<Post {self.id} - {self.platform} - {self.status}>"

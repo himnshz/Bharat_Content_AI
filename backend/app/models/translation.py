@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, Enum as SQLEnum, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -50,6 +50,12 @@ class Translation(Base):
     
     # Relationships
     content = relationship("Content", back_populates="translations")
+    
+    # Performance indexes for translation lookups
+    __table_args__ = (
+        Index('idx_translation_content_target', 'content_id', 'target_language'),
+        Index('idx_translation_languages', 'source_language', 'target_language'),
+    )
     
     def __repr__(self):
         return f"<Translation {self.id} - {self.source_language} to {self.target_language}>"

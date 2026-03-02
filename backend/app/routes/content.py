@@ -1,22 +1,45 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import datetime
+import bleach
+import logging
 
 from app.config.database import get_db
 from app.models import Content, ContentType, ContentStatus, ToneType, User
 from app.services.content_generation.ai_service_manager import get_ai_service_manager, get_service_info
+from app.auth.dependencies import get_current_user, enforce_quota
+from app.tasks.content_tasks import generate_content_async
+from celery.result import AsyncResult
+from app.config.redis_config import get_async_redis, AsyncTaskProgressTracker
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Request/Response Schemas
 class ContentGenerateRequest(BaseModel):
-    prompt: str = Field(..., min_length=1, max_length=5000, description="Content generation prompt")
+    prompt: str = Field(..., min_length=10, max_length=2000, description="Content generation prompt")
     language: str = Field(default="hindi", description="Target language for content")
     tone: ToneType = Field(default=ToneType.CASUAL, description="Tone of the content")
     content_type: ContentType = Field(default=ContentType.SOCIAL_POST, description="Type of content to generate")
-    user_id: int = Field(..., description="User ID")
+    
+    @validator('prompt')
+    def validate_prompt(cls, v):
+        """Validate and sanitize prompt"""
+        # Check for prompt injection patterns
+        forbidden_patterns = [
+            'ignore previous', 'ignore all previous', 'system:', 'admin:', 
+            '<script>', 'javascript:', 'onerror=', 'onclick='
+        ]
+        v_lower = v.lower()
+        for pattern in forbidden_patterns:
+            if pattern in v_lower:
+                raise ValueError(f'Invalid prompt content detected')
+        
+        # Sanitize HTML
+        v = bleach.clean(v, tags=[], strip=True)
+        return v.strip()
 
 class ContentEditRequest(BaseModel):
     edited_content: str = Field(..., min_length=1, description="Edited content text")
@@ -51,25 +74,30 @@ class ContentListResponse(BaseModel):
 
 
 @router.post("/generate", response_model=ContentResponse, status_code=status.HTTP_201_CREATED)
-async def generate_content(request: ContentGenerateRequest, db: Session = Depends(get_db)):
+async def generate_content(
+    request: ContentGenerateRequest,
+    current_user: User = Depends(enforce_quota("content_generation")),
+    db: Session = Depends(get_db)
+):
     """
     Generate AI content using any available AI service (Gemini, Bedrock, OpenAI, etc.).
-    Automatically selects the best available service based on configured API keys.
+    
+    SECURITY:
+    - Requires authentication
+    - Enforces quota limits based on subscription tier
+    - Validates and sanitizes input
+    - Sanitizes AI output
     """
     try:
-        # Verify user exists
-        user = db.query(User).filter(User.id == request.user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
         # Get AI service manager
         ai_manager = get_ai_service_manager()
         
         # Check if any services are available
         if not ai_manager.get_available_services():
+            logger.error("No AI services available")
             raise HTTPException(
                 status_code=503,
-                detail="No AI services available. Please configure at least one API key (GEMINI_API_KEY, AWS credentials, OPENAI_API_KEY, etc.)"
+                detail="AI service temporarily unavailable. Please try again later."
             )
         
         # Generate content using best available service
@@ -80,8 +108,10 @@ async def generate_content(request: ContentGenerateRequest, db: Session = Depend
             content_type=request.content_type.value
         )
         
+        # Sanitize AI-generated content
+        generated_text = bleach.clean(result['content'], tags=[], strip=True)
+        
         # Calculate metrics
-        generated_text = result['content']
         word_count = len(generated_text.split())
         char_count = len(generated_text)
         
@@ -92,7 +122,7 @@ async def generate_content(request: ContentGenerateRequest, db: Session = Depend
         
         # Create content record
         content = Content(
-            user_id=request.user_id,
+            user_id=current_user.id,  # SECURITY: Use authenticated user ID
             original_prompt=request.prompt,
             generated_content=generated_text,
             content_type=request.content_type,
@@ -105,30 +135,140 @@ async def generate_content(request: ContentGenerateRequest, db: Session = Depend
             character_count=char_count,
             keywords=keywords,
             hashtags=hashtags,
-            quality_score=85.0,  # Placeholder - can be enhanced with quality analysis
-            estimated_reading_time=word_count // 3  # ~180 words per minute
+            quality_score=85.0,
+            estimated_reading_time=word_count // 3
         )
         
         db.add(content)
+        
+        # Update user stats
+        current_user.content_generated_count += 1
+        
         db.commit()
         db.refresh(content)
         
-        # Update user stats
-        user.content_generated_count += 1
-        db.commit()
-        
+        logger.info(f"Content generated for user {current_user.id}, content_id={content.id}")
         return content
         
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Content generation failed: {str(e)}")
+        logger.error(f"Content generation failed for user {current_user.id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="An error occurred while generating content. Please try again."
+        )
+
+
+@router.post("/generate/async", status_code=status.HTTP_202_ACCEPTED)
+async def generate_content_async_endpoint(
+    request: ContentGenerateRequest,
+    current_user: User = Depends(enforce_quota("content_generation")),
+    db: Session = Depends(get_db)
+):
+    """
+    Generate AI content asynchronously (non-blocking).
+    Returns immediately with task ID for progress tracking.
+    
+    PERFORMANCE:
+    - Non-blocking: Returns in <100ms
+    - Background processing: AI generation happens in Celery worker
+    - Progress tracking: Use /generate/status/{task_id} to check progress
+    
+    SECURITY:
+    - Requires authentication
+    - Enforces quota limits
+    """
+    try:
+        # Start background task
+        task = generate_content_async.delay(
+            user_id=current_user.id,
+            prompt=request.prompt,
+            language=request.language,
+            tone=request.tone.value,
+            content_type=request.content_type.value
+        )
+        
+        logger.info(f"Async content generation started for user {current_user.id}, task_id={task.id}")
+        
+        return {
+            "task_id": task.id,
+            "status": "processing",
+            "message": "Content generation started. Use /generate/status/{task_id} to check progress.",
+            "estimated_time_seconds": 10
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to start async content generation: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to start content generation. Please try again."
+        )
+
+
+@router.get("/generate/status/{task_id}")
+async def get_generation_status(
+    task_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get status of async content generation task.
+    
+    Returns:
+    - status: processing, completed, failed
+    - progress: 0-100
+    - message: Current status message
+    - result: Generated content (when completed)
+    """
+    try:
+        # Check Celery task status
+        task = AsyncResult(task_id)
+        
+        # Get detailed progress from Redis
+        redis = await get_async_redis()
+        tracker = AsyncTaskProgressTracker(redis)
+        progress_data = await tracker.get_progress(task_id)
+        
+        if progress_data:
+            return progress_data
+        
+        # Fallback to Celery task state
+        if task.ready():
+            if task.successful():
+                return {
+                    "task_id": task_id,
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Content generated successfully",
+                    "result": task.result
+                }
+            else:
+                return {
+                    "task_id": task_id,
+                    "status": "failed",
+                    "progress": 0,
+                    "message": str(task.info) if task.info else "Task failed"
+                }
+        else:
+            return {
+                "task_id": task_id,
+                "status": "processing",
+                "progress": 50,
+                "message": "Generating content..."
+            }
+            
+    except Exception as e:
+        logger.error(f"Failed to get task status: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve task status"
+        )
 
 
 @router.get("/list", response_model=ContentListResponse)
 async def list_content(
-    user_id: int,
+    current_user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 20,
     content_type: Optional[ContentType] = None,
@@ -137,9 +277,13 @@ async def list_content(
     db: Session = Depends(get_db)
 ):
     """
-    List all content for a user with optional filters.
+    List all content for authenticated user with optional filters.
+    
+    SECURITY:
+    - User can only see their own content
+    - No IDOR vulnerability
     """
-    query = db.query(Content).filter(Content.user_id == user_id)
+    query = db.query(Content).filter(Content.user_id == current_user.id)
     
     if content_type:
         query = query.filter(Content.content_type == content_type)
@@ -155,13 +299,25 @@ async def list_content(
 
 
 @router.get("/{content_id}", response_model=ContentResponse)
-async def get_content(content_id: int, db: Session = Depends(get_db)):
+async def get_content(
+    content_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Get a specific content by ID.
+    
+    SECURITY:
+    - User can only access their own content
     """
-    content = db.query(Content).filter(Content.id == content_id).first()
+    content = db.query(Content).filter(
+        Content.id == content_id,
+        Content.user_id == current_user.id  # SECURITY: Prevent IDOR
+    ).first()
+    
     if not content:
         raise HTTPException(status_code=404, detail="Content not found")
+    
     return content
 
 
@@ -232,11 +388,22 @@ async def summarize_content(request: ContentSummarizeRequest, db: Session = Depe
 
 
 @router.delete("/{content_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_content(content_id: int, db: Session = Depends(get_db)):
+async def delete_content(
+    content_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Delete a content record.
+    
+    SECURITY:
+    - User can only delete their own content
     """
-    content = db.query(Content).filter(Content.id == content_id).first()
+    content = db.query(Content).filter(
+        Content.id == content_id,
+        Content.user_id == current_user.id  # SECURITY: Prevent IDOR
+    ).first()
+    
     if not content:
         raise HTTPException(status_code=404, detail="Content not found")
     

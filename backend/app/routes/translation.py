@@ -6,6 +6,7 @@ from datetime import datetime
 
 from app.config.database import get_db
 from app.models import Translation, TranslationMethod, Content, User
+from app.auth.dependencies import get_current_user, enforce_quota
 
 router = APIRouter()
 
@@ -22,7 +23,6 @@ class DirectTranslationRequest(BaseModel):
     source_language: str = Field(..., description="Source language")
     target_language: str = Field(..., description="Target language")
     tone: Optional[str] = Field(default="neutral", description="Desired tone")
-    user_id: int = Field(..., description="User ID")
 
 class TranslationResponse(BaseModel):
     id: int
@@ -61,13 +61,25 @@ SUPPORTED_LANGUAGES = {
 
 
 @router.post("/translate", response_model=TranslationResponse, status_code=status.HTTP_201_CREATED)
-async def translate_content(request: TranslationRequest, db: Session = Depends(get_db)):
+async def translate_content(
+    request: TranslationRequest,
+    current_user: User = Depends(enforce_quota("translations")),
+    db: Session = Depends(get_db)
+):
     """
     Translate existing content to a target Indian language using IndicTrans.
+    
+    SECURITY:
+    - Requires authentication
+    - Enforces quota limits
+    - User can only translate their own content
     """
     try:
-        # Verify content exists
-        content = db.query(Content).filter(Content.id == request.content_id).first()
+        # Verify content exists and belongs to user
+        content = db.query(Content).filter(
+            Content.id == request.content_id,
+            Content.user_id == current_user.id  # SECURITY: Prevent IDOR
+        ).first()
         if not content:
             raise HTTPException(status_code=404, detail="Content not found")
         
@@ -122,10 +134,8 @@ async def translate_content(request: TranslationRequest, db: Session = Depends(g
         db.refresh(translation)
         
         # Update user translation count
-        user = db.query(User).filter(User.id == content.user_id).first()
-        if user:
-            user.translations_count += 1
-            db.commit()
+        current_user.translations_count += 1
+        db.commit()
         
         return translation
         
@@ -137,16 +147,20 @@ async def translate_content(request: TranslationRequest, db: Session = Depends(g
 
 
 @router.post("/translate/direct", response_model=TranslationResponse, status_code=status.HTTP_201_CREATED)
-async def translate_text_direct(request: DirectTranslationRequest, db: Session = Depends(get_db)):
+async def translate_text_direct(
+    request: DirectTranslationRequest,
+    current_user: User = Depends(enforce_quota("translations")),
+    db: Session = Depends(get_db)
+):
     """
     Translate text directly without creating content first.
     Useful for quick translations.
+    
+    SECURITY:
+    - Requires authentication
+    - Enforces quota limits
     """
     try:
-        # Verify user exists
-        user = db.query(User).filter(User.id == request.user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
         
         # Validate languages
         if request.source_language.lower() not in SUPPORTED_LANGUAGES:
@@ -164,7 +178,7 @@ async def translate_text_direct(request: DirectTranslationRequest, db: Session =
         from app.models import ContentType, ContentStatus, ToneType
         
         temp_content = Content(
-            user_id=request.user_id,
+            user_id=current_user.id,  # SECURITY: Use authenticated user
             original_prompt="Direct translation",
             generated_content=request.text,
             content_type=ContentType.SOCIAL_POST,
@@ -193,7 +207,7 @@ async def translate_text_direct(request: DirectTranslationRequest, db: Session =
         db.refresh(translation)
         
         # Update user stats
-        user.translations_count += 1
+        current_user.translations_count += 1
         db.commit()
         
         return translation
@@ -206,11 +220,21 @@ async def translate_text_direct(request: DirectTranslationRequest, db: Session =
 
 
 @router.get("/list/{content_id}", response_model=TranslationListResponse)
-async def list_translations(content_id: int, db: Session = Depends(get_db)):
+async def list_translations(
+    content_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     List all translations for a specific content.
+    
+    SECURITY:
+    - User can only see translations for their own content
     """
-    content = db.query(Content).filter(Content.id == content_id).first()
+    content = db.query(Content).filter(
+        Content.id == content_id,
+        Content.user_id == current_user.id  # SECURITY: Prevent IDOR
+    ).first()
     if not content:
         raise HTTPException(status_code=404, detail="Content not found")
     
@@ -225,11 +249,21 @@ async def list_translations(content_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{translation_id}", response_model=TranslationResponse)
-async def get_translation(translation_id: int, db: Session = Depends(get_db)):
+async def get_translation(
+    translation_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Get a specific translation by ID.
+    
+    SECURITY:
+    - User can only access their own translations
     """
-    translation = db.query(Translation).filter(Translation.id == translation_id).first()
+    translation = db.query(Translation).join(Content).filter(
+        Translation.id == translation_id,
+        Content.user_id == current_user.id  # SECURITY: Prevent IDOR
+    ).first()
     if not translation:
         raise HTTPException(status_code=404, detail="Translation not found")
     return translation
@@ -242,15 +276,23 @@ class BatchTranslateRequest(BaseModel):
 @router.post("/batch", response_model=List[TranslationResponse], status_code=status.HTTP_201_CREATED)
 async def batch_translate(
     request: BatchTranslateRequest,
+    current_user: User = Depends(enforce_quota("translations")),
     db: Session = Depends(get_db)
 ):
     """
     Translate content to multiple languages at once.
+    
+    SECURITY:
+    - Requires authentication
+    - User can only translate their own content
     """
     content_id = request.content_id
     target_languages = request.target_languages
     try:
-        content = db.query(Content).filter(Content.id == content_id).first()
+        content = db.query(Content).filter(
+            Content.id == content_id,
+            Content.user_id == current_user.id  # SECURITY: Prevent IDOR
+        ).first()
         if not content:
             raise HTTPException(status_code=404, detail="Content not found")
         
@@ -297,10 +339,8 @@ async def batch_translate(
             db.refresh(translation)
         
         # Update user stats
-        user = db.query(User).filter(User.id == content.user_id).first()
-        if user:
-            user.translations_count += len([t for t in translations if t.id])
-            db.commit()
+        current_user.translations_count += len([t for t in translations if t.id])
+        db.commit()
         
         return translations
         
@@ -326,11 +366,21 @@ async def get_supported_languages():
 
 
 @router.delete("/{translation_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_translation(translation_id: int, db: Session = Depends(get_db)):
+async def delete_translation(
+    translation_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Delete a translation record.
+    
+    SECURITY:
+    - User can only delete their own translations
     """
-    translation = db.query(Translation).filter(Translation.id == translation_id).first()
+    translation = db.query(Translation).join(Content).filter(
+        Translation.id == translation_id,
+        Content.user_id == current_user.id  # SECURITY: Prevent IDOR
+    ).first()
     if not translation:
         raise HTTPException(status_code=404, detail="Translation not found")
     

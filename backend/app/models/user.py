@@ -1,7 +1,9 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Enum as SQLEnum, Index
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
+import uuid
 
 from app.config.database import Base
 
@@ -28,17 +30,17 @@ class User(Base):
     full_name = Column(String(255))
     
     # User profile
-    role = Column(SQLEnum(UserRole), default=UserRole.STUDENT)
-    subscription_tier = Column(SQLEnum(SubscriptionTier), default=SubscriptionTier.FREE)
+    role = Column(SQLEnum(UserRole), default=UserRole.STUDENT, index=True)
+    subscription_tier = Column(SQLEnum(SubscriptionTier), default=SubscriptionTier.FREE, index=True)
     preferred_language = Column(String(50), default="hindi")
     
     # Account status
-    is_active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True, index=True)
     is_verified = Column(Boolean, default=False)
     email_verified = Column(Boolean, default=False)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login = Column(DateTime)
     
@@ -48,13 +50,22 @@ class User(Base):
     posts_scheduled_count = Column(Integer, default=0)
     
     # AWS Cognito integration (optional)
-    cognito_user_id = Column(String(255), unique=True, nullable=True)
+    cognito_user_id = Column(String(255), unique=True, nullable=True, index=True)
     
     # Relationships
     contents = relationship("Content", back_populates="user", cascade="all, delete-orphan")
     posts = relationship("Post", back_populates="user", cascade="all, delete-orphan")
     social_accounts = relationship("SocialAccount", back_populates="user", cascade="all, delete-orphan")
     analytics = relationship("Analytics", back_populates="user", cascade="all, delete-orphan")
+    owned_teams = relationship("Team", back_populates="owner", foreign_keys="Team.owner_id")
+    team_memberships = relationship("TeamMember", back_populates="user")
+
+    # PostgreSQL-specific indexes for performance
+    __table_args__ = (
+        Index('idx_user_email_active', 'email', 'is_active'),
+        Index('idx_user_role_tier', 'role', 'subscription_tier'),
+        Index('idx_user_created_at', 'created_at'),
+    )
 
     def __repr__(self):
         return f"<User {self.username} ({self.email})>"

@@ -9,6 +9,9 @@ from app.models.social_account import SocialAccount
 from app.models.analytics import Analytics, ContentPerformance
 from app.models.voice_input import VoiceInput, VoiceInputStatus
 from app.models.ai_model_config import AIModelConfig, ModelUsageLog
+from app.models.campaign import Campaign, CampaignStatus, CampaignType
+from app.models.team import Team, TeamMember, TeamInvite, Comment, ApprovalWorkflow, ActivityLog, TeamRole, InviteStatus
+from app.models.template import Template, TemplateCategory
 
 __all__ = [
     "Base",
@@ -31,4 +34,17 @@ __all__ = [
     "VoiceInputStatus",
     "AIModelConfig",
     "ModelUsageLog",
+    "Campaign",
+    "CampaignStatus",
+    "CampaignType",
+    "Team",
+    "TeamMember",
+    "TeamInvite",
+    "Comment",
+    "ApprovalWorkflow",
+    "ActivityLog",
+    "TeamRole",
+    "InviteStatus",
+    "Template",
+    "TemplateCategory",
 ]

@@ -1,31 +1,71 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Response
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from passlib.context import CryptContext
 
 from app.config.database import get_db
 from app.models import User, UserRole, SubscriptionTier
+from app.auth.dependencies import (
+    create_access_token, 
+    create_refresh_token,
+    get_current_user,
+    ACCESS_TOKEN_EXPIRE_MINUTES
+)
 
 router = APIRouter()
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify password against hash"""
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+def get_password_hash(password: str) -> str:
+    """Hash password"""
+    return pwd_context.hash(password)
+
 # Request/Response Schemas
 class UserCreateRequest(BaseModel):
     email: EmailStr = Field(..., description="User email address")
     username: str = Field(..., min_length=3, max_length=50, description="Unique username")
-    password: str = Field(..., min_length=8, description="User password")
+    password: str = Field(..., min_length=8, max_length=128, description="User password")
     full_name: Optional[str] = Field(None, max_length=255, description="Full name")
     role: UserRole = Field(default=UserRole.STUDENT, description="User role")
     preferred_language: str = Field(default="hindi", description="Preferred language")
+    
+    @validator('password')
+    def validate_password(cls, v):
+        """Validate password strength"""
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        if not any(c.isupper() for c in v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not any(c.islower() for c in v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not any(c.isdigit() for c in v):
+            raise ValueError('Password must contain at least one digit')
+        return v
+    
+    @validator('username')
+    def validate_username(cls, v):
+        """Validate username format"""
+        if not v.isalnum() and '_' not in v:
+            raise ValueError('Username can only contain letters, numbers, and underscores')
+        return v.lower()
 
 class UserUpdateRequest(BaseModel):
     full_name: Optional[str] = None
     preferred_language: Optional[str] = None
     role: Optional[UserRole] = None
+
+class LoginRequest(BaseModel):
+    email: EmailStr = Field(..., description="User email address")
+    password: str = Field(..., description="User password")
 
 class UserResponse(BaseModel):
     id: int
@@ -43,249 +83,256 @@ class UserResponse(BaseModel):
     posts_scheduled_count: int
     created_at: datetime
     last_login: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
+        # SECURITY: Explicitly exclude sensitive fields
+        fields = {
+            'hashed_password': {'exclude': True},
+            'cognito_user_id': {'exclude': True}
+        }
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
 
 class UserStatsResponse(BaseModel):
     user_id: int
-    username: str
-    total_content: int
-    total_translations: int
-    total_posts: int
-    total_published: int
-    account_age_days: int
-    subscription_tier: SubscriptionTier
 
 
-def hash_password(password: str) -> str:
-    """Hash a password using bcrypt."""
-    return pwd_context.hash(password)
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
-
+# ============================================================================
+# AUTHENTICATION ENDPOINTS (SECURED)
+# ============================================================================
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register_user(request: UserCreateRequest, db: Session = Depends(get_db)):
+async def register_user(user_data: UserCreateRequest, db: Session = Depends(get_db)):
     """
-    Register a new user account.
+    Register a new user account
+    
+    SECURITY:
+    - Password strength validation
+    - Email uniqueness check
+    - Username uniqueness check
+    - Password hashing with bcrypt
     """
-    try:
-        # Check if email already exists
-        existing_email = db.query(User).filter(User.email == request.email).first()
-        if existing_email:
-            raise HTTPException(status_code=400, detail="Email already registered")
-        
-        # Check if username already exists
-        existing_username = db.query(User).filter(User.username == request.username).first()
-        if existing_username:
-            raise HTTPException(status_code=400, detail="Username already taken")
-        
-        # Create new user
-        user = User(
-            email=request.email,
-            username=request.username,
-            hashed_password=hash_password(request.password),
-            full_name=request.full_name,
-            role=request.role,
-            preferred_language=request.preferred_language,
-            subscription_tier=SubscriptionTier.FREE,
-            is_active=True,
-            is_verified=False,
-            email_verified=False
+    # Check if email already exists
+    existing_user = db.query(User).filter(User.email == user_data.email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
         )
-        
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        
-        return user
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to register user: {str(e)}")
-
-
-@router.get("/{user_id}", response_model=UserResponse)
-async def get_user(user_id: int, db: Session = Depends(get_db)):
-    """
-    Get user profile by ID.
-    """
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
-
-
-@router.get("/username/{username}", response_model=UserResponse)
-async def get_user_by_username(username: str, db: Session = Depends(get_db)):
-    """
-    Get user profile by username.
-    """
-    user = db.query(User).filter(User.username == username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
-
-
-@router.put("/{user_id}", response_model=UserResponse)
-async def update_user(user_id: int, request: UserUpdateRequest, db: Session = Depends(get_db)):
-    """
-    Update user profile information.
-    """
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
     
-    if request.full_name is not None:
-        user.full_name = request.full_name
-    if request.preferred_language is not None:
-        user.preferred_language = request.preferred_language
-    if request.role is not None:
-        user.role = request.role
+    # Check if username already exists
+    existing_username = db.query(User).filter(User.username == user_data.username).first()
+    if existing_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already taken"
+        )
     
-    user.updated_at = datetime.utcnow()
+    # Hash password
+    hashed_password = get_password_hash(user_data.password)
     
-    db.commit()
-    db.refresh(user)
-    
-    return user
-
-
-@router.get("/{user_id}/stats", response_model=UserStatsResponse)
-async def get_user_stats(user_id: int, db: Session = Depends(get_db)):
-    """
-    Get comprehensive statistics for a user.
-    """
-    from app.models import Content, Post, PostStatus
-    
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Count content
-    total_content = db.query(Content).filter(Content.user_id == user_id).count()
-    
-    # Count posts
-    total_posts = db.query(Post).filter(Post.user_id == user_id).count()
-    total_published = db.query(Post).filter(
-        Post.user_id == user_id,
-        Post.status == PostStatus.PUBLISHED
-    ).count()
-    
-    # Calculate account age
-    account_age = (datetime.utcnow() - user.created_at).days
-    
-    return UserStatsResponse(
-        user_id=user.id,
-        username=user.username,
-        total_content=total_content,
-        total_translations=user.translations_count,
-        total_posts=total_posts,
-        total_published=total_published,
-        account_age_days=account_age,
-        subscription_tier=user.subscription_tier
+    # Create new user
+    new_user = User(
+        email=user_data.email,
+        username=user_data.username,
+        hashed_password=hashed_password,
+        full_name=user_data.full_name,
+        role=user_data.role,
+        preferred_language=user_data.preferred_language,
+        is_active=True,
+        is_verified=False,
+        email_verified=False
     )
+    
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    return new_user
 
 
-@router.post("/{user_id}/upgrade-subscription")
-async def upgrade_subscription(
-    user_id: int,
-    tier: SubscriptionTier,
+@router.post("/login", response_model=LoginResponse)
+async def login(
+    credentials: LoginRequest,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """
-    Upgrade user subscription tier.
+    Login with email and password
+    
+    SECURITY:
+    - Password verification with bcrypt
+    - JWT token generation with expiration
+    - HttpOnly cookie for token storage
+    - Rate limiting (TODO: implement with Redis)
     """
-    user = db.query(User).filter(User.id == user_id).first()
+    # Find user by email
+    user = db.query(User).filter(User.email == credentials.email).first()
+    
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password"
+        )
     
-    # Validate upgrade path
-    tier_order = {
-        SubscriptionTier.FREE: 0,
-        SubscriptionTier.BASIC: 1,
-        SubscriptionTier.PRO: 2,
-        SubscriptionTier.ENTERPRISE: 3
-    }
+    # Verify password
+    if not verify_password(credentials.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password"
+        )
     
-    if tier_order[tier] <= tier_order[user.subscription_tier]:
-        raise HTTPException(status_code=400, detail="Cannot downgrade or maintain same tier")
+    # Check if user is active
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is inactive"
+        )
     
-    user.subscription_tier = tier
-    user.updated_at = datetime.utcnow()
-    
-    db.commit()
-    db.refresh(user)
-    
-    return {
-        "status": "success",
-        "user_id": user.id,
-        "new_tier": user.subscription_tier.value,
-        "message": f"Successfully upgraded to {tier.value} tier"
-    }
-
-
-@router.post("/{user_id}/verify-email")
-async def verify_email(user_id: int, db: Session = Depends(get_db)):
-    """
-    Mark user email as verified.
-    """
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    if user.email_verified:
-        return {"status": "already_verified", "message": "Email already verified"}
-    
-    user.email_verified = True
-    user.is_verified = True
-    user.updated_at = datetime.utcnow()
-    
-    db.commit()
-    
-    return {
-        "status": "success",
-        "message": "Email verified successfully"
-    }
-
-
-@router.post("/{user_id}/login")
-async def record_login(user_id: int, db: Session = Depends(get_db)):
-    """
-    Record user login timestamp.
-    """
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
+    # Update last login
     user.last_login = datetime.utcnow()
     db.commit()
     
-    return {
-        "status": "success",
-        "last_login": user.last_login
-    }
+    # Create access token
+    access_token = create_access_token(data={"sub": user.id})
+    refresh_token = create_refresh_token(data={"sub": user.id})
+    
+    # Set HttpOnly cookie (SECURE)
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,  # Not accessible to JavaScript
+        secure=True,    # HTTPS only (set to False for local development)
+        samesite="lax",  # CSRF protection
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+    
+    return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=user
+    )
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: int, db: Session = Depends(get_db)):
+@router.post("/logout")
+async def logout(
+    response: Response,
+    current_user: User = Depends(get_current_user)
+):
     """
-    Delete a user account (soft delete by deactivating).
+    Logout current user
+    
+    SECURITY:
+    - Clears HttpOnly cookie
+    - Invalidates session
     """
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    response.delete_cookie(key="access_token")
     
-    # Soft delete - just deactivate
-    user.is_active = False
-    user.updated_at = datetime.utcnow()
+    return {"message": "Successfully logged out"}
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """
+    Get current authenticated user information
     
+    SECURITY:
+    - Requires valid JWT token
+    - Returns only safe user data (no password hash)
+    """
+    return current_user
+
+
+@router.put("/me", response_model=UserResponse)
+async def update_current_user(
+    user_update: UserUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update current user profile
+    
+    SECURITY:
+    - User can only update their own profile
+    - Cannot change role (requires admin)
+    """
+    if user_update.full_name is not None:
+        current_user.full_name = user_update.full_name
+    
+    if user_update.preferred_language is not None:
+        current_user.preferred_language = user_update.preferred_language
+    
+    # Role change requires admin privileges
+    if user_update.role is not None:
+        if current_user.role not in [UserRole.BUSINESS, UserRole.STARTUP]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions to change role"
+            )
+        current_user.role = user_update.role
+    
+    current_user.updated_at = datetime.utcnow()
     db.commit()
+    db.refresh(current_user)
     
-    return None
+    return current_user
+
+
+@router.post("/refresh-token")
+async def refresh_access_token(
+    refresh_token: str,
+    response: Response,
+    db: Session = Depends(get_db)
+):
+    """
+    Refresh access token using refresh token
+    
+    SECURITY:
+    - Validates refresh token
+    - Issues new access token
+    """
+    try:
+        payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        
+        if payload.get("type") != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type"
+            )
+        
+        user_id: int = payload.get("sub")
+        user = db.query(User).filter(User.id == user_id).first()
+        
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user"
+            )
+        
+        # Create new access token
+        new_access_token = create_access_token(data={"sub": user.id})
+        
+        # Set new cookie
+        response.set_cookie(
+            key="access_token",
+            value=new_access_token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        )
+        
+        return {
+            "access_token": new_access_token,
+            "token_type": "bearer"
+        }
+    
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token"
+        )

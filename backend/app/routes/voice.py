@@ -7,6 +7,7 @@ import os
 
 from app.config.database import get_db
 from app.models import VoiceInput, VoiceInputStatus, User
+from app.auth.dependencies import get_current_user
 
 router = APIRouter()
 
@@ -42,20 +43,21 @@ class TranscriptionRequest(BaseModel):
 
 @router.post("/upload", response_model=VoiceInputResponse, status_code=status.HTTP_201_CREATED)
 async def upload_voice_input(
-    user_id: int,
     audio_file: UploadFile = File(...),
     language: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Upload an audio file for voice-to-text transcription.
     Supports MP3, WAV, M4A, and other common audio formats.
+    
+    SECURITY:
+    - Requires authentication
+    - File type validation
+    - File size validation (max 25MB)
     """
     try:
-        # Verify user exists
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
         
         # Validate file type
         allowed_formats = ['audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/x-m4a', 'audio/ogg']
@@ -77,7 +79,7 @@ async def upload_voice_input(
         # TODO: Upload to AWS S3
         # For now, create a mock S3 URL
         timestamp = int(datetime.utcnow().timestamp())
-        file_key = f"voice-inputs/{user_id}/{timestamp}_{audio_file.filename}"
+        file_key = f"voice-inputs/{current_user.id}/{timestamp}_{audio_file.filename}"
         audio_url = f"https://bharat-content-ai.s3.amazonaws.com/{file_key}"
         
         # Extract audio format
@@ -85,7 +87,7 @@ async def upload_voice_input(
         
         # Create voice input record
         voice_input = VoiceInput(
-            user_id=user_id,
+            user_id=current_user.id,
             audio_file_url=audio_url,
             audio_file_key=file_key,
             audio_format=audio_format,
@@ -160,16 +162,20 @@ async def transcribe_audio(request: TranscriptionRequest, db: Session = Depends(
 
 @router.get("/list", response_model=VoiceInputListResponse)
 async def list_voice_inputs(
-    user_id: int,
     skip: int = 0,
     limit: int = 20,
     status: Optional[VoiceInputStatus] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    List all voice inputs for a user.
+    List all voice inputs for authenticated user.
+    
+    SECURITY:
+    - Requires authentication
+    - User can only see their own voice inputs
     """
-    query = db.query(VoiceInput).filter(VoiceInput.user_id == user_id)
+    query = db.query(VoiceInput).filter(VoiceInput.user_id == current_user.id)
     
     if status:
         query = query.filter(VoiceInput.status == status)
@@ -181,25 +187,47 @@ async def list_voice_inputs(
 
 
 @router.get("/{voice_input_id}", response_model=VoiceInputResponse)
-async def get_voice_input(voice_input_id: int, db: Session = Depends(get_db)):
+async def get_voice_input(
+    voice_input_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Get a specific voice input by ID.
+    
+    SECURITY:
+    - Requires authentication
+    - User can only access their own voice inputs
     """
-    voice_input = db.query(VoiceInput).filter(VoiceInput.id == voice_input_id).first()
+    voice_input = db.query(VoiceInput).filter(
+        VoiceInput.id == voice_input_id,
+        VoiceInput.user_id == current_user.id  # SECURITY: Prevent IDOR
+    ).first()
     if not voice_input:
         raise HTTPException(status_code=404, detail="Voice input not found")
     return voice_input
 
 
 @router.post("/{voice_input_id}/to-content")
-async def convert_voice_to_content(voice_input_id: int, db: Session = Depends(get_db)):
+async def convert_voice_to_content(
+    voice_input_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Convert transcribed voice input directly to content generation using any available AI service.
+    
+    SECURITY:
+    - Requires authentication
+    - User can only convert their own voice inputs
     """
     from app.models import Content, ContentType, ContentStatus, ToneType
     from app.services.content_generation.ai_service_manager import get_ai_service_manager
     
-    voice_input = db.query(VoiceInput).filter(VoiceInput.id == voice_input_id).first()
+    voice_input = db.query(VoiceInput).filter(
+        VoiceInput.id == voice_input_id,
+        VoiceInput.user_id == current_user.id  # SECURITY: Prevent IDOR
+    ).first()
     if not voice_input:
         raise HTTPException(status_code=404, detail="Voice input not found")
     
@@ -222,7 +250,7 @@ async def convert_voice_to_content(voice_input_id: int, db: Session = Depends(ge
         
         # Create content record
         content = Content(
-            user_id=voice_input.user_id,
+            user_id=current_user.id,
             original_prompt=f"Voice input: {voice_input.transcribed_text}",
             generated_content=result['content'],
             content_type=ContentType.SOCIAL_POST,
@@ -252,11 +280,22 @@ async def convert_voice_to_content(voice_input_id: int, db: Session = Depends(ge
 
 
 @router.delete("/{voice_input_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_voice_input(voice_input_id: int, db: Session = Depends(get_db)):
+async def delete_voice_input(
+    voice_input_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Delete a voice input record.
+    
+    SECURITY:
+    - Requires authentication
+    - User can only delete their own voice inputs
     """
-    voice_input = db.query(VoiceInput).filter(VoiceInput.id == voice_input_id).first()
+    voice_input = db.query(VoiceInput).filter(
+        VoiceInput.id == voice_input_id,
+        VoiceInput.user_id == current_user.id  # SECURITY: Prevent IDOR
+    ).first()
     if not voice_input:
         raise HTTPException(status_code=404, detail="Voice input not found")
     
